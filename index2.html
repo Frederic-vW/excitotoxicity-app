@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ischaemic Stroke Cascade — Build the Pathway</title>
+<style>
+  :root{
+    --bg: #f4f6f9;
+    --board-bg: #ffffff;
+    --grid-line: #e6eaf0;
+    --box-bg: #ffffff;
+    --box-border: #35507a;
+    --box-text: #1b2a41;
+    --accent: #2b6cb0;
+    --source-bg: #e8f4ea;
+    --source-border: #2f9e44;
+    --bin-bg: #fbeaea;
+    --bin-border: #c0392b;
+    --bin-active-bg: #e74c3c;
+    --arrow-color: #35507a;
+    --handle-fill: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header {
+    flex: 0 0 auto;
+    padding: 10px 18px;
+    background: #1b2a41;
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    z-index: 20;
+  }
+  header h1 { margin: 0 0 4px 0; font-size: 18px; font-weight: 600; }
+  header p { margin: 0; font-size: 12.5px; color: #cdd7e5; line-height: 1.5; }
+  header b { color: #fff; }
+
+  #board-wrap {
+    flex: 1 1 auto;
+    position: relative;
+    overflow: auto;
+    background: var(--bg);
+  }
+  #board {
+    position: relative;
+    min-width: 1500px;
+    min-height: 900px;
+    width: 100%;
+    height: 100%;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .box {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--box-bg);
+    border: 2px solid var(--box-border);
+    color: var(--box-text);
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.25;
+    cursor: grab;
+    box-shadow: 0 2px 5px rgba(20,30,50,0.12);
+    user-select: none;
+    touch-action: none;
+    z-index: 1;
+  }
+  .box:active { cursor: grabbing; }
+  .box.concept:hover { border-color: var(--accent); box-shadow: 0 3px 8px rgba(20,30,50,0.2); }
+
+  #svg-layer {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .arrow-line {
+    stroke: var(--arrow-color);
+    stroke-width: 3;
+    fill: none;
+    pointer-events: none;
+  }
+  .arrow-hit {
+    stroke: transparent;
+    stroke-width: 16;
+    fill: none;
+    pointer-events: stroke;
+    cursor: pointer;
+  }
+  .handle {
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+  }
+  .handle:active { cursor: grabbing; }
+  .handle-end { fill: var(--handle-fill); stroke: var(--arrow-color); stroke-width: 2.5; r: 7; }
+  .handle-mid { fill: var(--arrow-color); opacity: 0.55; r: 6; }
+  .handle-mid:hover { opacity: 0.9; }
+
+  /* Floating tool buttons: always reachable regardless of scroll */
+  .tool-btn {
+    position: fixed;
+    bottom: 22px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    user-select: none;
+    z-index: 30;
+    touch-action: none;
+  }
+  #new-arrow-btn {
+    left: 24px;
+    background: var(--source-border);
+    border: 2px solid #1f7a34;
+    cursor: grab;
+  }
+  #new-arrow-btn:active { cursor: grabbing; }
+  #bin-btn {
+    right: 24px;
+    background: var(--bin-border);
+    border: 2px solid #922b21;
+    transition: background 0.12s, transform 0.12s;
+  }
+  #bin-btn.active {
+    background: var(--bin-active-bg);
+    transform: scale(1.12);
+  }
+  .icon { font-size: 16px; line-height: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Ischaemic Stroke Cascade — Build the Pathway</h1>
+    <p>
+      <b>Drag</b> boxes anywhere to arrange them. <b>Click the green “New Arrow” button</b> to pop out a fresh arrow,
+      then <b>drag its tail, head, or middle dot</b> to freely aim it, attach it to a box, or move it — arrows rotate
+      freely, they are not locked to any angle. <b>Drop an arrow's middle dot (or double-click an arrow)</b>
+      on the red <b>Bin</b> to discard it.
+    </p>
+  </header>
+
+  <div id="board-wrap">
+    <div id="board">
+      <svg id="svg-layer">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#35507a"></path>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+  </div>
+
+  <div id="new-arrow-btn" class="tool-btn" title="Click to pop out a new arrow">
+    <span class="icon">✛</span><span>New Arrow</span>
+  </div>
+  <div id="bin-btn" class="tool-btn" title="Drop an arrow here to delete it">
+    <span class="icon">🗑</span><span>Bin</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const board = document.getElementById('board');
+  const svg = document.getElementById('svg-layer');
+  const newArrowBtn = document.getElementById('new-arrow-btn');
+  const binBtn = document.getElementById('bin-btn');
+  const svgNS = "http://www.w3.org/2000/svg";
+
+  const CONTENT_W = 1500;
+  const CONTENT_H = 900;
+
+  let uidCounter = 0;
+  function uid(prefix){ return prefix + (++uidCounter); }
+
+  // ---------- Boxes ----------
+  const boxLabels = [
+    "pre-existing cardiovascular disease (AF, atherosclerosis, cardiomyopathy)",
+    "thrombus or thrombembolus in brain artery",
+    "focal ischemia",
+    "reduced oxygen and glucose supply",
+    "anaerobic metabolism",
+    "reduced ATP production",
+    "impairment of ATP-dependent ion transport",
+    "lactic acidosis",
+    "increased intracellular Na+/extracellular K+",
+    "osmotic H2O influx",
+    "neuronal depolarisation",
+    "increased intracellular Ca2+",
+    "increased glutamate release",
+    "activation of phospholipases",
+    "activation of NMDA receptors",
+    "damage to structural proteins, membranes, DNA",
+    "irreversible cellular injury",
+    "microscopic appearance of necrosis",
+    "macroscopic appearance of infarction: 'softening'"
+  ];
+
+  function shuffle(arr){
+    for (let i = arr.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+  shuffle(boxLabels);
+
+  const boxes = [];
+  const boxesById = {};
+
+  const GRID_ROWS = 6;
+  const COL_W = 260;
+  const ROW_H = 70;
+
+  boxLabels.forEach((label, i) => {
+    const col = Math.floor(i / GRID_ROWS);
+    const row = i % GRID_ROWS;
+    const box = {
+      id: uid('box'),
+      type: 'concept',
+      x: 24 + col * COL_W,
+      y: 20 + row * ROW_H,
+      w: 230,
+      h: 54,
+      label
+    };
+    boxes.push(box);
+    boxesById[box.id] = box;
+  });
+
+  function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+  function clampBox(box){
+    box.x = clamp(box.x, 0, Math.max(0, CONTENT_W - box.w));
+    box.y = clamp(box.y, 0, Math.max(0, CONTENT_H - box.h));
+  }
+
+  function createBoxElement(box){
+    const el = document.createElement('div');
+    el.className = 'box concept';
+    el.style.left = box.x + 'px';
+    el.style.top = box.y + 'px';
+    el.style.width = box.w + 'px';
+    el.style.minHeight = box.h + 'px';
+    el.textContent = box.label;
+    board.appendChild(el);
+    box.el = el;
+
+    el.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== undefined && ev.button !== 0) return;
+      ev.preventDefault();
+      el.setPointerCapture(ev.pointerId);
+      const startClientX = ev.clientX, startClientY = ev.clientY;
+      const origX = box.x, origY = box.y;
+
+      function onMove(e){
+        const dx = e.clientX - startClientX;
+        const dy = e.clientY - startClientY;
+        box.x = origX + dx;
+        box.y = origY + dy;
+        clampBox(box);
+        el.style.left = box.x + 'px';
+        el.style.top = box.y + 'px';
+        arrows.forEach(a => {
+          if ((a.start.mode === 'box' && a.start.boxId === box.id) ||
+              (a.end.mode === 'box' && a.end.boxId === box.id)) {
+            updateArrowElements(a);
+          }
+        });
+      }
+      function onUp(e){
+        el.releasePointerCapture(ev.pointerId);
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+      }
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+    });
+  }
+
+  boxes.forEach(createBoxElement);
+
+  // ---------- Coordinate helpers ----------
+  function boardPoint(clientX, clientY){
+    const r = board.getBoundingClientRect();
+    return {
+      x: clientX - r.left + board.scrollLeft,
+      y: clientY - r.top + board.scrollTop
+    };
+  }
+
+  function findConceptBoxAtClient(clientX, clientY){
+    for (const box of boxes){
+      const r = box.el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom){
+        return box;
+      }
+    }
+    return null;
+  }
+
+  function isOverBin(clientX, clientY){
+    const r = binBtn.getBoundingClientRect();
+    return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  }
+
+  function updateBinHighlight(clientX, clientY){
+    binBtn.classList.toggle('active', isOverBin(clientX, clientY));
+  }
+  function clearBinHighlight(){ binBtn.classList.remove('active'); }
+
+  // ---------- Arrows ----------
+  const arrows = [];
+  const arrowEls = {};
+
+  function edgePoint(box, angle){
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    const hw = box.w / 2, hh = box.h / 2;
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    let t = Infinity;
+    if (dx !== 0) t = Math.min(t, hw / Math.abs(dx));
+    if (dy !== 0) t = Math.min(t, hh / Math.abs(dy));
+    if (!isFinite(t)) t = 0;
+    return { x: cx + dx * t, y: cy + dy * t };
+  }
+
+  function computeEndpoint(ep){
+    if (ep.mode === 'box'){
+      const box = boxesById[ep.boxId];
+      if (!box) return { x: ep.x || 0, y: ep.y || 0 };
+      return edgePoint(box, ep.angle);
+    }
+    return { x: ep.x, y: ep.y };
+  }
+
+  function makeCircle(cls){
+    const c = document.createElementNS(svgNS, 'circle');
+    c.setAttribute('class', cls);
+    return c;
+  }
+
+  function createArrowElements(arrow){
+    const g = document.createElementNS(svgNS, 'g');
+    const hit = document.createElementNS(svgNS, 'line');
+    hit.setAttribute('class', 'arrow-hit');
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('class', 'arrow-line');
+    line.setAttribute('marker-end', 'url(#arrowhead)');
+    const mid = makeCircle('handle handle-mid');
+    const startH = makeCircle('handle handle-end');
+    const endH = makeCircle('handle handle-end');
+
+    g.appendChild(hit);
+    g.appendChild(line);
+    g.appendChild(mid);
+    g.appendChild(startH);
+    g.appendChild(endH);
+    svg.appendChild(g);
+
+    arrowEls[arrow.id] = { g, hit, line, mid, startH, endH };
+
+    hit.addEventListener('dblclick', () => deleteArrow(arrow.id));
+
+    startH.addEventListener('pointerdown', (ev) => startEndpointDrag(ev, arrow.id, 'start'));
+    endH.addEventListener('pointerdown', (ev) => startEndpointDrag(ev, arrow.id, 'end'));
+    mid.addEventListener('pointerdown', (ev) => startMidDrag(ev, arrow.id));
+
+    updateArrowElements(arrow);
+  }
+
+  function updateArrowElements(arrow){
+    const els = arrowEls[arrow.id];
+    if (!els) return;
+    const p1 = computeEndpoint(arrow.start);
+    const p2 = computeEndpoint(arrow.end);
+    els.hit.setAttribute('x1', p1.x); els.hit.setAttribute('y1', p1.y);
+    els.hit.setAttribute('x2', p2.x); els.hit.setAttribute('y2', p2.y);
+    els.line.setAttribute('x1', p1.x); els.line.setAttribute('y1', p1.y);
+    els.line.setAttribute('x2', p2.x); els.line.setAttribute('y2', p2.y);
+    els.mid.setAttribute('cx', (p1.x + p2.x) / 2);
+    els.mid.setAttribute('cy', (p1.y + p2.y) / 2);
+    els.startH.setAttribute('cx', p1.x); els.startH.setAttribute('cy', p1.y);
+    els.endH.setAttribute('cx', p2.x); els.endH.setAttribute('cy', p2.y);
+  }
+
+  function deleteArrow(id){
+    const idx = arrows.findIndex(a => a.id === id);
+    if (idx === -1) return;
+    const els = arrowEls[id];
+    if (els) els.g.remove();
+    delete arrowEls[id];
+    arrows.splice(idx, 1);
+  }
+
+  function attachOrFree(ep, clientX, clientY){
+    const box = findConceptBoxAtClient(clientX, clientY);
+    if (box){
+      const p = boardPoint(clientX, clientY);
+      const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+      const angle = Math.atan2(p.y - cy, p.x - cx);
+      return { mode: 'box', boxId: box.id, angle };
+    }
+    const p = boardPoint(clientX, clientY);
+    return { mode: 'free', x: p.x, y: p.y };
+  }
+
+  function startEndpointDrag(ev, arrowId, which){
+    ev.stopPropagation();
+    ev.preventDefault();
+    const el = ev.currentTarget;
+    el.setPointerCapture(ev.pointerId);
+    const arrow = arrows.find(a => a.id === arrowId);
+
+    function onMove(e){
+      const p = boardPoint(e.clientX, e.clientY);
+      arrow[which] = { mode: 'free', x: p.x, y: p.y };
+      updateArrowElements(arrow);
+      updateBinHighlight(e.clientX, e.clientY);
+    }
+    function onUp(e){
+      el.releasePointerCapture(ev.pointerId);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      clearBinHighlight();
+      if (isOverBin(e.clientX, e.clientY)){
+        deleteArrow(arrowId);
+        return;
+      }
+      arrow[which] = attachOrFree(arrow[which], e.clientX, e.clientY);
+      updateArrowElements(arrow);
+    }
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+  }
+
+  function startMidDrag(ev, arrowId){
+    ev.stopPropagation();
+    ev.preventDefault();
+    const el = ev.currentTarget;
+    el.setPointerCapture(ev.pointerId);
+    const arrow = arrows.find(a => a.id === arrowId);
+    const p1 = computeEndpoint(arrow.start);
+    const p2 = computeEndpoint(arrow.end);
+    const startPt = boardPoint(ev.clientX, ev.clientY);
+
+    function onMove(e){
+      const cur = boardPoint(e.clientX, e.clientY);
+      const dx = cur.x - startPt.x, dy = cur.y - startPt.y;
+      arrow.start = { mode: 'free', x: p1.x + dx, y: p1.y + dy };
+      arrow.end = { mode: 'free', x: p2.x + dx, y: p2.y + dy };
+      updateArrowElements(arrow);
+      updateBinHighlight(e.clientX, e.clientY);
+    }
+    function onUp(e){
+      el.releasePointerCapture(ev.pointerId);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      clearBinHighlight();
+      if (isOverBin(e.clientX, e.clientY)){
+        deleteArrow(arrowId);
+      }
+    }
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+  }
+
+  // ---------- New arrow creation from the floating "New Arrow" button ----------
+  // Clicking the button pops a small ready-made horizontal arrow out above it (length ~= 4 boxes),
+  // which the student then grabs by its handles/middle dot to aim, move and attach.
+  const ARROW_SPAWN_LEN = 4 * ROW_H;
+
+  newArrowBtn.addEventListener('click', () => {
+    const rect = newArrowBtn.getBoundingClientRect();
+    const anchor = boardPoint(rect.left + rect.width / 2, rect.top);
+
+    const GAP = 30;
+    let y = anchor.y - GAP;
+    if (y < 10) y = 10;
+    const tailX = anchor.x;
+    const headX = tailX + ARROW_SPAWN_LEN;
+
+    const arrow = {
+      id: uid('arrow'),
+      start: { mode: 'free', x: tailX, y: y },
+      end: { mode: 'free', x: headX, y: y }
+    };
+    arrows.push(arrow);
+    createArrowElements(arrow);
+  });
+
+})();
+</script>
+</body>
+</html>
